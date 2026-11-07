@@ -90,13 +90,13 @@ while True:
             allow_drive = 1
             draw_label(frame, "LIGHT NO - GO", (x1, y1 - 10), (0,0,0), (0,255,0))        
         elif class_id == 3 and left_min < 800:  # LEFT, 수정
-            allow_drive = 1
+            allow_drive = 3
             draw_label(frame, "LEFT", (x1, y1 - 10), (0,0,0), (255,0,0))
         elif class_id == 4 and center_min < 800:  # right, 수정
-            allow_drive = 1
+            allow_drive = 4
             draw_label(frame, "RIGHT", (x1, y1 - 10), (0,0,0), (255,255,0))
         elif class_id == 5 and right_min < 600:  # parking, 숫자 수정
-            allow_drive = 1
+            allow_drive = 5
             draw_label(frame, "PARKING", (x1, y1 - 10), (0,0,0), (0,255,255))
         
         box_color = (0,255,0) if class_id == 0 else (0,0,255)
