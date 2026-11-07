@@ -1,0 +1,186 @@
+import cv2
+import numpy as np
+import altinoai
+import torch      
+import time
+from ultralytics import YOLO
+
+# ───── 모델 이름 설정 ───── -> 자신의 모델 이름으로 변경
+
+#traffic_model_name = YOLO(f"obj.pt") #객체인식 클래스 2개로 각각 red, green 으로 학습 되어야 함
+#lane_model_name = YOLO(f"line.pt") #세그멘테이션 모델 -> 인스턴스감지로 차선 학습 되어야 함
+
+# 바꿔야 하는 부분 
+traffic_model_name = 'object_1' #객체인식 클래스 2개로 각각 red, green 으로 학습 되어야 함
+lane_model_name = 'line' #세그멘테이션 모델 -> 인스턴스감지로 차선 학습 되어야 함
+
+# ───── AI 모델 로드 ─────
+altinoai.load_ai()
+
+# ───── 라벨 출력 함수 ─────
+def draw_label(img, text, pos, color=(255,255,255), bg_color=(0,0,0)):
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.7
+    thickness = 2
+    text_size = cv2.getTextSize(text, font, scale, thickness)[0]
+    x, y = pos
+    cv2.rectangle(img, (x, y - text_size[1] - 5), (x + text_size[0] + 10, y + 5), bg_color, -1)
+    cv2.putText(img, text, (x + 5, y), font, scale, color, thickness)
+
+# ───── 점선 그리기 함수 ─────
+def draw_dotted_line(img, pt1, pt2, color=(50, 255, 200), thickness=2, gap=12):
+    dist = int(np.hypot(pt2[0]-pt1[0], pt2[1]-pt1[1]))
+    for i in range(0, dist, gap * 2):
+        start = (
+            int(pt1[0] + (pt2[0] - pt1[0]) * i / dist),
+            int(pt1[1] + (pt2[1] - pt1[1]) * i / dist)
+        )
+        end = (
+            int(pt1[0] + (pt2[0] - pt1[0]) * (i + gap) / dist),
+            int(pt1[1] + (pt2[1] - pt1[1]) * (i + gap) / dist)
+        )
+        cv2.line(img, start, end, color, thickness)
+        
+allow_drive=1
+flag=0
+# ───── 메인 루프 ─────
+while True:
+    # 1. 실시간 이미지 입력
+    frame = altinoai.camera.get_image()
+    H, W = frame.shape[:2]
+
+    # 2. 신호등 인식
+    light_results = altinoai.ai.get_model_output(frame, traffic_model_name)
+    light_result = light_results[0]
+
+    # 3.장애물 인식
+    theta, dist = altinoai.lidar.get_lidar()
+    
+# 바꿔야 하는 부분 
+    left = [d for t,d in zip(theta,dist) if t>= 330] # 330에서 360 사이
+    center = [d for t,d in zip(theta,dist) if t>= 340 or t<=20]
+    right = [d for t,d in zip(theta,dist) if t<=30]
+
+    if left:
+        left_min = min(left)
+    else:
+        left_min = 9999
+    if center:
+       center_min = min(center)
+    else:
+        center_min = 9999   
+    if right:
+        right_min = min(right)
+    else:
+        right_min = 9999 
+  
+    
+        
+    allow_drive=1
+    for box in light_result.boxes:
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+        class_id = int(box.cls[0])
+        if class_id == 0 and left_min < 1000:  # 빨간불, 1000보다(1M) 안에 있을 때 감지함, 수정
+            allow_drive = 0
+            draw_label(frame, "RED LIGHT - STOP", (x1, y1 - 10), (255,255,255), (0,0,255))
+        elif class_id == 1:  # 초록불 or OFF
+            allow_drive = 1
+            draw_label(frame, "GREEN LIGHT - GO", (x1, y1 - 10), (0,0,0), (0,255,0))        
+        elif class_id==2:  # 초록불 or OFF
+            allow_drive = 1
+            draw_label(frame, "LIGHT NO - GO", (x1, y1 - 10), (0,0,0), (0,255,0))        
+        elif class_id == 3 and left_min < 800:  # LEFT, 수정
+            allow_drive = 1
+            draw_label(frame, "LEFT", (x1, y1 - 10), (0,0,0), (255,0,0))
+        elif class_id == 4 and center_min < 800:  # right, 수정
+            allow_drive = 1
+            draw_label(frame, "RIGHT", (x1, y1 - 10), (0,0,0), (255,255,0))
+        elif class_id == 5 and right_min < 600:  # parking, 숫자 수정
+            allow_drive = 1
+            draw_label(frame, "PARKING", (x1, y1 - 10), (0,0,0), (0,255,255))
+        
+        box_color = (0,255,0) if class_id == 0 else (0,0,255)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3)
+
+    # 3. 차선 인식
+    track_results = altinoai.ai.get_model_output(frame, lane_model_name)
+    track_result = track_results[0]
+    annotated_frame = track_result.plot()
+    steer = 0
+
+    if track_result.masks is not None:
+        masks = track_result.masks.data.cpu().numpy()
+        boxes = track_result.boxes
+        scores = boxes.conf.cpu().numpy()
+
+        best_idx = np.argmax(scores)
+        best_mask = masks[best_idx]
+
+        mask_resized = cv2.resize(best_mask, (W, H), interpolation=cv2.INTER_NEAREST)
+        binary_mask = (mask_resized > 0.5).astype(np.uint8)
+
+        center_points = []
+        for y in range(H):
+            x_indices = np.where(binary_mask[y, :] == 1)[0]
+            if len(x_indices) > 0:
+                cx = int(np.mean(x_indices))
+                center_points.append((cx, y))
+
+        for j in range(1, len(center_points)):
+            cv2.line(annotated_frame, center_points[j - 1], center_points[j], (0, 0, 255), 2)
+
+        if center_points:
+            avg_cx = int(np.mean([pt[0] for pt in center_points]))
+            steer = (avg_cx - W // 2) * 0.1
+            steer = max(min(steer, 10), -10)
+
+            draw_dotted_line(annotated_frame, (avg_cx, 0), (avg_cx, H), (75, 239, 83), 2)
+            draw_label(annotated_frame, f"Center X: {avg_cx}", (avg_cx + 10, 30), (255,255,255), (0,0,0))
+            draw_label(annotated_frame, f"Steer: {steer:.1f}", (avg_cx + 10, 60), (255,255,255), (0,0,0))
+
+    # 4. 모터 제어
+    
+    if allow_drive==0:
+        altinoai.control.set_motor(0,0,0)   
+    elif allow_drive==3  : #left
+        altinoai.control.set_motor(-10, -10, 3)  #속도 조정
+    elif allow_drive==4  : #right
+        altinoai.control.set_motor(10, 10, 3) # 속도 조정
+    elif allow_drive==5  :
+        altinoai.control.set_motor(0, 0, 0)
+        break
+    else:
+        altinoai.control.set_motor(int(steer), int(steer), 5)
+        
+
+    # 5. 상태 출력
+    if allow_drive==0:
+        status_text = "Stopped" 
+    elif allow_drive==1 or allow_drive==2:
+        status_text = "Driving"
+    elif allow_drive==3:
+        status_text = "Left"
+    elif allow_drive==4:
+        status_text = "Right"
+    elif allow_drive==5:
+        status_text = "Parking"
+    elif allow_drive==6:
+        status_text = "Child"
+    elif allow_drive==7:
+        status_text = "Child X"
+    
+    draw_label(annotated_frame, f"STATUS: {status_text}", (10, H - 20), (255,255,255), (50,50,50))
+    
+    # 6. 화면 출력
+    altinoai.camera.show_image(annotated_frame, quality=80)
+    altinoai.lidar.show_lidar(theta,dist)
+
+# 조정해라
+time.sleep(1)
+altinoai.control.set_motor(-10, -10, 5)
+
+time.sleep(1)
+altinoai.control.set_motor(10, 10, -5)
+time.sleep(3)
+
+altinoai.control.set_motor(0,0,0)
