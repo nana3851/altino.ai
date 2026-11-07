@@ -10,7 +10,6 @@ from ultralytics import YOLO
 #traffic_model_name = YOLO(f"obj.pt") #객체인식 클래스 2개로 각각 red, green 으로 학습 되어야 함
 #lane_model_name = YOLO(f"line.pt") #세그멘테이션 모델 -> 인스턴스감지로 차선 학습 되어야 함
 
-# 바꿔야 하는 부분 
 traffic_model_name = 'object_1' #객체인식 클래스 2개로 각각 red, green 으로 학습 되어야 함
 lane_model_name = 'line' #세그멘테이션 모델 -> 인스턴스감지로 차선 학습 되어야 함
 
@@ -89,13 +88,13 @@ while True:
         elif class_id==2:  # 초록불 or OFF
             allow_drive = 1
             draw_label(frame, "LIGHT NO - GO", (x1, y1 - 10), (0,0,0), (0,255,0))        
-        elif class_id == 3 :  # LEFT, 수정
+        elif class_id == 3 and left_min < 800 :  # LEFT, 수정
             allow_drive = 3
             draw_label(frame, "LEFT", (x1, y1 - 10), (0,0,0), (255,0,0))
         elif class_id == 4 and center_min < 800:  # right, 수정
             allow_drive = 4
             draw_label(frame, "RIGHT", (x1, y1 - 10), (0,0,0), (255,255,0))
-        elif class_id == 5 and right_min < 600:  # parking, 숫자 수정
+        elif class_id == 5 and right_min < 1000:  # parking, 숫자 수정
             allow_drive = 5
             draw_label(frame, "PARKING", (x1, y1 - 10), (0,0,0), (0,255,255))
         
@@ -131,26 +130,27 @@ while True:
 
         if center_points:
             avg_cx = int(np.mean([pt[0] for pt in center_points]))
-            steer = (avg_cx - W // 2) * 0.1
-            steer = max(min(steer, 10), -10)
+            # 와리가리 정도
+            steer = (avg_cx - W // 2) * 0.15
+            steer = max(min(steer, 15), -15)
 
             draw_dotted_line(annotated_frame, (avg_cx, 0), (avg_cx, H), (75, 239, 83), 2)
             draw_label(annotated_frame, f"Center X: {avg_cx}", (avg_cx + 10, 30), (255,255,255), (0,0,0))
             draw_label(annotated_frame, f"Steer: {steer:.1f}", (avg_cx + 10, 60), (255,255,255), (0,0,0))
 
     # 4. 모터 제어
-    
     if allow_drive==0:
         altinoai.control.set_motor(0,0,0)   
     elif allow_drive==3  : #left
-        altinoai.control.set_motor(-10, -10, 3)  #속도 조정
+        altinoai.control.set_motor(-10, -10, 7)  #속도 조정
     elif allow_drive==4  : #right
-        altinoai.control.set_motor(10, 10, 3) # 속도 조정
+        altinoai.control.set_motor(10, 10, 7) # 속도 조정
     elif allow_drive==5  :
         altinoai.control.set_motor(0, 0, 0)
         break
     else:
-        altinoai.control.set_motor(int(steer), int(steer), 5)
+        # 직선에서의 속도
+        altinoai.control.set_motor(int(steer), int(steer), 7)
         
 
     # 5. 상태 출력
@@ -176,11 +176,10 @@ while True:
     altinoai.lidar.show_lidar(theta,dist)
 
 # 조정해라
+altinoai.control.set_motor(0, 0, 0)
 time.sleep(1)
-altinoai.control.set_motor(-10, -10, 5)
 
+altinoai.control.set_motor(10, 10, 5)
 time.sleep(1)
-altinoai.control.set_motor(10, 10, -5)
-time.sleep(3)
 
 altinoai.control.set_motor(0,0,0)
