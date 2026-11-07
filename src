@@ -1,3 +1,4 @@
+# dead zone 설정
 import cv2
 import numpy as np
 import altinoai
@@ -91,7 +92,7 @@ while True:
         elif class_id == 3 and left_min < 800 :  # LEFT, 수정
             allow_drive = 3
             draw_label(frame, "LEFT", (x1, y1 - 10), (0,0,0), (255,0,0))
-        elif class_id == 4 and center_min < 800:  # right, 수정
+        elif class_id == 4 and center_min < 600:  # right, 수정
             allow_drive = 4
             draw_label(frame, "RIGHT", (x1, y1 - 10), (0,0,0), (255,255,0))
         elif class_id == 5 and right_min < 1000:  # parking, 숫자 수정
@@ -130,9 +131,15 @@ while True:
 
         if center_points:
             avg_cx = int(np.mean([pt[0] for pt in center_points]))
-            # 와리가리 정도
-            steer = (avg_cx - W // 2) * 0.15
-            steer = max(min(steer, 15), -15)
+        
+            error = avg_cx - W // 2 # 차선 중심과 화면 중심의 차이
+            DEAD_ZONE = 30
+        
+            if abs(error) < DEAD_ZONE:
+                steer = 0
+            else:
+                steer = error * 0.15
+                steer = max(min(steer, 15), -15)
 
             draw_dotted_line(annotated_frame, (avg_cx, 0), (avg_cx, H), (75, 239, 83), 2)
             draw_label(annotated_frame, f"Center X: {avg_cx}", (avg_cx + 10, 30), (255,255,255), (0,0,0))
@@ -180,6 +187,6 @@ altinoai.control.set_motor(0, 0, 0)
 time.sleep(1)
 
 altinoai.control.set_motor(10, 10, 5)
-time.sleep(1)
+time.sleep(2)
 
 altinoai.control.set_motor(0,0,0)
